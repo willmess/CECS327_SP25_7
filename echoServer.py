@@ -11,6 +11,29 @@ DB_CONFIG = {
 }
 TABLE = '"Data_virtual"'
 
+class TreeNode:
+    def __init__(self, key, metadata):
+        self.key = key
+        self.metadata = metadata
+        self.left = None
+        self.right = None
+
+def insert(node, key, metadata):
+    if node is None:
+        return TreeNode(key, metadata)
+    elif key < node.key:
+        node.left = insert(node.left, key, metadata)
+    else:
+        node.right = insert(node.right, key, metadata)
+    return node
+
+def search(node, key):
+    if node is None or node.key == key:
+        return node.metadata if node else None
+    if key < node.key:
+        return search(node.left, key)
+    return search(node.right, key)
+
 def main():
     # Specify the IP address and port to listen on
     server_ip = input("Enter server IP address: ")
