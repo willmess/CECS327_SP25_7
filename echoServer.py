@@ -1,4 +1,5 @@
 import socket
+import psycopg2
 
 DB_CONFIG = {
     'host': 'ep-frosty-sea-a6uqgpgz-pooler.us-west-2.aws.neon.tech',
