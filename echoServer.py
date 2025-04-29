@@ -1,5 +1,14 @@
 import socket
 
+DB_CONFIG = {
+    'host': 'ep-frosty-sea-a6uqgpgz-pooler.us-west-2.aws.neon.tech',
+    'port': 5432,
+    'dbname': 'neondb',
+    'user': 'neondb_owner',
+    'password': 'npg_zbx9eflUnsh5',
+    'sslmode': 'require'
+}
+TABLE = '"Data_virtual"'
 
 def main():
     # Specify the IP address and port to listen on
