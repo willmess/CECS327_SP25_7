@@ -1,5 +1,6 @@
 import socket
 import psycopg2
+import psycopg2.extras
 from datetime import datetime, timedelta
 from dateutil import tz
 import pytz
@@ -11,9 +12,10 @@ DB_CONFIG = {
     'dbname': 'neondb',
     'user': 'neondb_owner',
     'password': 'npg_zbx9eflUnsh5',
-    'sslmode': 'require'
+    'sslmode': 'require',
+    'connect_timeout': 10
 }
-TABLE = '"data_virtual"'
+TABLE = '"Data_virtual"'
 
 # === Binary Search Tree for Metadata ===
 class TreeNode:
@@ -79,42 +81,45 @@ def liters_to_gallons(liters):
 def amps_to_kwh(amps, volts=120, duration_hours=1):
     return float(amps) * volts * duration_hours / 1000
 
-# === Query 1: Avg Moisture (Fridge1, past 3 hrs)
+# === Query 1: Avg Moisture
 def avg_moisture(cursor, tree):
     device = "SmartFridge1"
     meta = search(tree, device)
     if not meta:
         return "Device metadata not found."
-
     sensor_key = meta["moisture_sensor"]
-    time_cutoff = int((datetime.utcnow() - timedelta(hours=3)).timestamp())
+    time_cutoff = int((datetime.now(pytz.UTC) - timedelta(hours=3)).timestamp())
 
-    cursor.execute(f"""
-        SELECT AVG(CAST(payload ->> %s AS FLOAT))
-        FROM {TABLE}
-        WHERE topic = 'Fridge/Board/Sensor'
-        AND (payload ->> 'timestamp')::BIGINT > %s
-    """, (sensor_key, time_cutoff))
+    try:
+        cursor.execute(f"""
+            SELECT AVG(CAST(payload ->> %s AS FLOAT))
+            FROM {TABLE}
+            WHERE topic = 'Fridge/Board/Sensor'
+              AND (payload ->> 'timestamp')::BIGINT > %s
+        """, (sensor_key, time_cutoff))
+        result = cursor.fetchone()[0]
+        return f"Avg {sensor_key} (last 3 hrs): {result:.2f}% RH" if result else "No recent moisture data found."
+    except Exception as e:
+        return f"DB error during moisture query: {str(e)}"
 
-    result = cursor.fetchone()[0]
-    return f"Avg {sensor_key} (last 3 hrs): {result:.2f}% RH" if result else "No recent data found."
-
-# === Query 2: Avg Water Use (Dishwasher)
+# === Query 2: Avg Water
 def avg_water(cursor, tree):
     device = "SmartDishwasher"
     meta = search(tree, device)
     if not meta:
         return "Device metadata not found."
-
     sensor_key = meta["water_sensor"]
 
-    cursor.execute(f"""
-        SELECT AVG(CAST(payload ->> %s AS FLOAT))
-        FROM {TABLE}
-        WHERE topic = 'Fridge/Board/Sensor'
-    """, (sensor_key,))
-    result = cursor.fetchone()[0]
-    return f"Avg water per cycle: {liters_to_gallons(result):.2f} gallons" if result else "No water data available."
+    try:
+        cursor.execute(f"""
+            SELECT AVG(CAST(payload ->> %s AS FLOAT))
+            FROM {TABLE}
+            WHERE topic = 'Fridge/Board/Sensor'
+        """, (sensor_key,))
+        result = cursor.fetchone()[0]
+        return f"Avg water per cycle: {liters_to_gallons(result):.2f} gallons" if result else "No water data found."
+    except Exception as e:
+        return f"DB error during water query: {str(e)}"
 
 # === Query 3: Power Comparison
 def compare_power(cursor, tree):
@@ -126,19 +131,23 @@ def compare_power(cursor, tree):
         if not meta:
             usage[device] = 0
             continue
-
         sensor_key = meta["ammeter"]
-        cursor.execute(f"""
-            SELECT AVG(CAST(payload ->> %s AS FLOAT))
-            FROM {TABLE}
-            WHERE topic = 'Fridge/Board/Sensor'
-        """, (sensor_key,))
-        avg_amp = cursor.fetchone()[0]
-        usage[device] = amps_to_kwh(avg_amp) if avg_amp else 0
+
+        try:
+            cursor.execute(f"""
+                SELECT AVG(CAST(payload ->> %s AS FLOAT))
+                FROM {TABLE}
+                WHERE topic = 'Fridge/Board/Sensor'
+            """, (sensor_key,))
+            avg_amp = cursor.fetchone()[0]
+            usage[device] = amps_to_kwh(avg_amp) if avg_amp else 0
+        except Exception as e:
+            usage[device] = 0
 
     lines = [f"{dev}: {kwh:.2f} kWh" for dev, kwh in usage.items()]
     most = max(usage.items(), key=lambda x: x[1])[0]
     return "\n".join(lines) + f"\n\nMost electricity used: {most}"
+
 
 # === Query Routing
 QUERY_MAP = {
@@ -149,6 +158,18 @@ QUERY_MAP = {
 
 # === Main TCP Server
 def main():
+    conn = psycopg2.connect(
+        host='ep-frosty-sea-a6uqgpgz-pooler.us-west-2.aws.neon.tech',
+        port=5432,
+        dbname='neondb',
+        user='neondb_owner',
+        password='npg_zbx9eflUnsh5',
+        sslmode='require',
+        connect_timeout=10
+    )
+    conn.autocommit = True  # Ensures queries run without waiting for commit
+
+
     server_ip = input("Enter server IP (e.g., 127.0.0.1): ")
     server_port = int(input("Enter port number (e.g., 12345): "))
 
